@@ -1,11 +1,12 @@
 using System.Text;
 using API.FurnitureStore.Data;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using API.FurnitureStore.API.Services;
 using API.FurnitureStore.API.Configoration;
+using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.OpenApi.Models;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -20,7 +21,10 @@ builder.Services.AddDbContext<APIFurnitureContext>
     );
 
 builder.Services.Configure<JwtConfig>(builder.Configuration.GetSection("JwtConfig"));
+
+//Configuration email service
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));
+builder.Services.AddSingleton<IEmailSender, EmailServices>();
 
 builder.Services.AddAuthentication(options =>
 {
@@ -60,8 +64,10 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 //Always use this order...
-/*1.*/ app.UseAuthentication();
-/*2.*/ app.UseAuthorization();
+/*1.*/
+app.UseAuthentication();
+/*2.*/
+app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
