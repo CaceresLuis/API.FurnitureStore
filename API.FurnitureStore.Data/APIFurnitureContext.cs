@@ -1,6 +1,6 @@
 ﻿using API.FurnitureStore.Shared;
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 
 namespace API.FurnitureStore.Data
 {
@@ -13,6 +13,7 @@ namespace API.FurnitureStore.Data
         public DbSet<Product> Products { get; set; }
         public DbSet<OrderDetail> OrderDetails { get; set; }
         public DbSet<ProductCategory> ProductCategories { get; set; }
+        public DbSet<RefreshToken> RefreshTokens { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -23,7 +24,7 @@ namespace API.FurnitureStore.Data
         {
             base.OnModelCreating(modelBuilder);
             modelBuilder.Entity<OrderDetail>()
-                .HasKey(od => new {od.OrderId,od.ProductId});
+                .HasKey(od => new { od.OrderId, od.ProductId });
         }
     }
 }

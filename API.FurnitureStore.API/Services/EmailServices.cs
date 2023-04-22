@@ -26,13 +26,11 @@ namespace API.FurnitureStore.API.Services
                 message.Subject = subject;
                 message.Body = new TextPart("html") { Text = htmlMessage};
 
-                using (var client = new SmtpClient())
-                {
-                    await client.ConnectAsync(_settings.Server, _settings.Port);
-                    await client.AuthenticateAsync(_settings.UserName, _settings.Password);
-                    await client.SendAsync(message);
-                    await client.DisconnectAsync(true);
-                }
+                using var client = new SmtpClient();
+                await client.ConnectAsync(_settings.Server, _settings.Port);
+                await client.AuthenticateAsync(_settings.UserName, _settings.Password);
+                await client.SendAsync(message);
+                await client.DisconnectAsync(true);
             }
             catch (Exception)
             {

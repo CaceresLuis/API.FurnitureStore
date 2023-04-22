@@ -1,13 +1,17 @@
 ﻿using System.Text;
 using System.Security.Claims;
+using API.FurnitureStore.Data;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Encodings.Web;
+using API.FurnitureStore.Shared;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using API.FurnitureStore.Shared.DTOs;
 using API.FurnitureStore.Shared.Auth;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using API.FurnitureStore.Shared.Common;
 using Microsoft.AspNetCore.WebUtilities;
 using API.FurnitureStore.API.Configoration;
 using Microsoft.AspNetCore.Identity.UI.Services;
@@ -20,13 +24,17 @@ namespace API.FurnitureStore.API.Controllers
     {
         private readonly JwtConfig _jwtConfig;
         private readonly IEmailSender _emailSender;
+        private readonly APIFurnitureContext _context;
         private readonly UserManager<IdentityUser> _userManager;
+        private readonly TokenValidationParameters _tokenValidationParameters;
 
-        public AuthenticationController(IOptions<JwtConfig> jwtConfig, UserManager<IdentityUser> userManager, IEmailSender emailSender)
+        public AuthenticationController(IOptions<JwtConfig> jwtConfig, UserManager<IdentityUser> userManager, IEmailSender emailSender, APIFurnitureContext context, TokenValidationParameters tokenValidationParameters)
         {
-            _jwtConfig = jwtConfig.Value;
+            _context = context;
             _userManager = userManager;
             _emailSender = emailSender;
+            _jwtConfig = jwtConfig.Value;
+            _tokenValidationParameters = tokenValidationParameters;
         }
 
         [HttpPost("Register")]
@@ -35,7 +43,7 @@ namespace API.FurnitureStore.API.Controllers
             if (!ModelState.IsValid) return BadRequest();
 
             IdentityUser emailExist = await _userManager.FindByEmailAsync(request.EmailAddress);
-            if (emailExist != null)
+            if (emailExist is null)
                 return BadRequest(new AuthResult
                 {
                     Status = false,
@@ -66,8 +74,6 @@ namespace API.FurnitureStore.API.Controllers
                 });
             }
 
-            //string token = GenerateToken(user);
-
             await SendVerificationEmail(user);
             return Ok(new AuthResult()
             {
@@ -81,14 +87,14 @@ namespace API.FurnitureStore.API.Controllers
             if (!ModelState.IsValid) return BadRequest();
 
             IdentityUser existeingUser = await _userManager.FindByEmailAsync(request.Email);
-            if (existeingUser == null)
+            if (existeingUser is null)
                 return BadRequest(new AuthResult
                 {
                     Status = false,
                     Errors = new List<string> { "Invalid Payload" }
                 });
 
-            if(!existeingUser.EmailConfirmed)
+            if (!existeingUser.EmailConfirmed)
                 return BadRequest(new AuthResult
                 {
                     Status = false,
@@ -103,9 +109,28 @@ namespace API.FurnitureStore.API.Controllers
                     Errors = new List<string> { "Invalid Credentials" }
                 });
 
-            string token = GenerateToken(existeingUser);
+            return Ok(GenerateTokenAsync(existeingUser));
+        }
 
-            return Ok(new AuthResult { Status = true, Token = token });
+        [HttpPost("Refreshtoken")]
+        public async Task<IActionResult> RefreshToken([FromBody] TokenRequest tokenRequest)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(new AuthResult
+                {
+                    Errors = new List<string> { "Invalid parameters" },
+                    Status = false
+                });
+
+            AuthResult result = await VerifyAndGenerateTokenAsync(tokenRequest);
+            if (result is null)
+                return BadRequest(new AuthResult
+                {
+                    Errors = new List<string> { "Invalid token" },
+                    Status = false
+                });
+
+            return Ok(result);
         }
 
         [HttpGet]
@@ -120,7 +145,7 @@ namespace API.FurnitureStore.API.Controllers
 
             IdentityUser user = await _userManager.FindByIdAsync(userId);
 
-            if (user == null)
+            if (user is null)
                 return NotFound($"Unable to load user with '{userId}'. ");
 
             code = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(code));
@@ -131,7 +156,7 @@ namespace API.FurnitureStore.API.Controllers
             return Ok(status);
         }
 
-        private string GenerateToken(IdentityUser user)
+        private async Task<AuthResult> GenerateTokenAsync(IdentityUser user)
         {
             JwtSecurityTokenHandler jwtTokenHandler = new();
             byte[] key = Encoding.UTF8.GetBytes(_jwtConfig.Secret);
@@ -145,13 +170,34 @@ namespace API.FurnitureStore.API.Controllers
                     new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
                     new Claim(JwtRegisteredClaimNames.Iat, DateTime.Now.ToUniversalTime().ToString()),
                 })),
-                Expires = DateTime.UtcNow.AddHours(1),
+                Expires = DateTime.UtcNow.Add(_jwtConfig.Expirytime),
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256)
             };
 
             SecurityToken token = jwtTokenHandler.CreateToken(tokenDescriptor);
 
-            return jwtTokenHandler.WriteToken(token);
+            string jwtToken = jwtTokenHandler.WriteToken(token);
+
+            RefreshToken refreshToken = new RefreshToken
+            {
+                JwtId = token.Id,
+                Token = RandomGenerator.GenerateRandomString(23),
+                AddedDate = DateTime.UtcNow,
+                ExpiryDate = DateTime.UtcNow.AddDays(30),
+                IsRevoked = false,
+                IsUsed = false,
+                UserId = user.Id
+            };
+
+            await _context.RefreshTokens.AddAsync(refreshToken);
+            await _context.SaveChangesAsync();
+
+            return new AuthResult
+            {
+                Token = jwtToken,
+                RefreshToken = refreshToken.Token,
+                Status = true
+            };
         }
 
         private async Task SendVerificationEmail(IdentityUser user)
@@ -162,7 +208,6 @@ namespace API.FurnitureStore.API.Controllers
             string callackUrl = $"{Request.Scheme}://{Request.Host}{Url.Action("ConfirmEmail", controller: "Authentication", new { userId = user.Id, code = verificationCode })}";
 
             string verificationLink = $"{HtmlEncoder.Default.Encode(callackUrl)}";
-            //string emailBody = $"Please confirm your account by <a href='{HtmlEncoder.Default.Encode(callackUrl)}'> Click here </a> If you don't see it, try crawling :(";
             string emailBody = "<!DOCTYPE html>\n" +
                    "<html>\n" +
                    "<head>\n" +
@@ -175,6 +220,63 @@ namespace API.FurnitureStore.API.Controllers
                    "</html>";
 
             await _emailSender.SendEmailAsync(user.Email, "Confirm your email", emailBody);
+        }
+
+
+        private async Task<AuthResult> VerifyAndGenerateTokenAsync(TokenRequest tokenRequest)
+        {
+            JwtSecurityTokenHandler jwtTokenHandler = new();
+            try
+            {
+                _tokenValidationParameters.ValidateLifetime = false;
+
+                ClaimsPrincipal tokenBeingVerified = jwtTokenHandler.ValidateToken(tokenRequest.Token, _tokenValidationParameters, out SecurityToken? validatedToken);
+
+                if (validatedToken is JwtSecurityToken jwtSecurityToken)
+                {
+                    bool result = jwtSecurityToken.Header.Alg.Equals(SecurityAlgorithms.HmacSha256, StringComparison.InvariantCultureIgnoreCase);
+
+                    if (!result || tokenBeingVerified == null)
+                        throw new Exception("Invalid Token");
+                }
+
+                long utcExpiryDate = long.Parse(tokenBeingVerified.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Exp).Value);
+
+                DateTime expiryDate = DateTimeOffset.FromUnixTimeSeconds(utcExpiryDate).UtcDateTime;
+                if (expiryDate < DateTime.UtcNow)
+                    throw new Exception("Token Expired");
+
+
+                /*var storedToken = await _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == tokenRequest.RefreshToken);
+                if (storedToken is null)
+                    throw new Exception("Invalid Token");*/
+                //This is the same as the previous comment
+                RefreshToken storedToken = await _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == tokenRequest.RefreshToken) ?? throw new Exception("Invalid Token");
+
+                if (storedToken.IsRevoked || storedToken.IsUsed)
+                    throw new Exception("Invalid Token");
+
+                string jti = tokenBeingVerified.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Jti).Value;
+                if (jti != storedToken.JwtId)
+                    throw new Exception("Invalid Token");
+
+                if (storedToken.ExpiryDate < DateTime.UtcNow)
+                    throw new Exception("Token Expired");
+
+                storedToken.IsUsed = true;
+                _context.RefreshTokens.Update(storedToken);
+                await _context.SaveChangesAsync();
+
+                IdentityUser dbuser = await _userManager.FindByIdAsync(storedToken.UserId);
+
+                return await GenerateTokenAsync(dbuser);
+            }
+            catch (Exception e)
+            {
+                string message = e.Message == "Invalid Token" || e.Message == "Token Expired" ? e.Message : "Internal Error";
+
+                return new AuthResult() { Status = false, Errors = new List<string> { message } };
+            }
         }
     }
 }
