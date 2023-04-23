@@ -27,7 +27,7 @@ namespace API.FurnitureStore.API.Controllers
         [HttpGet("id")]
         public async Task<IActionResult> GetClient(int id)
         {
-            Client client = await _context.Clients.FirstOrDefaultAsync(c => c.Id == id);
+            Client? client = await _context.Clients.FirstOrDefaultAsync(c => c.Id == id);
 
             if (client == null)
                 return NotFound();

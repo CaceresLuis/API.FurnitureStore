@@ -28,8 +28,11 @@ namespace API.FurnitureStore.API.Controllers
         private readonly UserManager<IdentityUser> _userManager;
         private readonly TokenValidationParameters _tokenValidationParameters;
 
-        public AuthenticationController(IOptions<JwtConfig> jwtConfig, UserManager<IdentityUser> userManager, IEmailSender emailSender, APIFurnitureContext context, TokenValidationParameters tokenValidationParameters)
+        private readonly ILogger<AuthenticationController> _logger;
+
+        public AuthenticationController(IOptions<JwtConfig> jwtConfig, UserManager<IdentityUser> userManager, IEmailSender emailSender, APIFurnitureContext context, TokenValidationParameters tokenValidationParameters, ILogger<AuthenticationController> logger)
         {
+            _logger = logger;
             _context = context;
             _userManager = userManager;
             _emailSender = emailSender;
@@ -43,7 +46,9 @@ namespace API.FurnitureStore.API.Controllers
             if (!ModelState.IsValid) return BadRequest();
 
             IdentityUser emailExist = await _userManager.FindByEmailAsync(request.EmailAddress);
-            if (emailExist is null)
+            if (emailExist != null)
+            {
+                _logger.LogError("A user is traying to register: Email Already exist");
                 return BadRequest(new AuthResult
                 {
                     Status = false,
@@ -52,6 +57,7 @@ namespace API.FurnitureStore.API.Controllers
                         "Email Already exist"
                     }
                 });
+            }
 
             IdentityUser user = new()
             {
@@ -67,6 +73,8 @@ namespace API.FurnitureStore.API.Controllers
                 foreach (IdentityError? err in isCreated.Errors)
                     errors.Add(err.Description);
 
+                string message = $"A user is traying to register: {errors.FirstOrDefault()}";
+                _logger.LogError(message);
                 return BadRequest(new AuthResult
                 {
                     Status = false,
